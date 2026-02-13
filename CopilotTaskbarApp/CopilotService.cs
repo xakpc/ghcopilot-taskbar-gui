@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,29 +26,22 @@ public class CopilotService : IAsyncDisposable
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine("[CopilotService] Starting Copilot CLI...");
-                var startTime = DateTime.UtcNow;
                 await _client.StartAsync(cancellationToken);
-                var elapsed = DateTime.UtcNow - startTime;
-                System.Diagnostics.Debug.WriteLine($"[CopilotService] CLI started successfully in {elapsed.TotalSeconds:F2}s");
                 _isStarted = true;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[CopilotService] CLI startup failed: {ex.Message}");
                 throw new Exception($"Failed to start Copilot. Ensure you're authenticated with GitHub.\n\nDetails: {ex.Message}", ex);
             }
         }
-        else
-        {
-            System.Diagnostics.Debug.WriteLine("[CopilotService] CLI already started, reusing connection");
-        }
     }
 
+    [RequiresDynamicCode("GitHub Copilot SDK uses internal dynamic types for session responses")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "SDK session handling requires dynamic for internal types. Pattern matching provides type safety.")]
     public async Task<string> GetResponseAsync(string prompt, string? context = null, string? imageBase64 = null, List<ChatMessage>? recentMessages = null, CancellationToken cancellationToken = default)
     {
         var methodStartTime = DateTime.UtcNow;
-        System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== GetResponseAsync START at {methodStartTime:HH:mm:ss.fff} =====");
+        System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== Request START at {methodStartTime:HH:mm:ss.fff} =====");
         
         try
         {
@@ -55,9 +49,7 @@ public class CopilotService : IAsyncDisposable
             await EnsureStartedAsync(cancellationToken);
             System.Diagnostics.Debug.WriteLine($"[CopilotService] Stage 1 (CLI Start): {(DateTime.UtcNow - stageStart).TotalSeconds:F2}s");
 
-            // Create a new session for this request
             stageStart = DateTime.UtcNow;
-            System.Diagnostics.Debug.WriteLine($"[CopilotService] Creating SDK session...");
             dynamic session = await _client.CreateSessionAsync(new SessionConfig
             {
                 Model = "gpt-4",
@@ -67,7 +59,6 @@ public class CopilotService : IAsyncDisposable
 
             try
             {
-                // Build the prompt with context
                 var fullPrompt = prompt;
                 if (!string.IsNullOrEmpty(context))
                 {
@@ -76,7 +67,6 @@ public class CopilotService : IAsyncDisposable
                         var conversationHistory = "";
                         if (recentMessages != null && recentMessages.Count > 0)
                         {
-                            // Include last 5 exchanges (10 messages max) for context continuity
                             var recentCount = Math.Min(10, recentMessages.Count);
                             var relevant = recentMessages.Skip(Math.Max(0, recentMessages.Count - recentCount)).ToList();
                             
@@ -115,28 +105,19 @@ public class CopilotService : IAsyncDisposable
                     }
                 }
 
-                // Append image if provided (using Markdown Data URI syntax for Vision models)
                 if (!string.IsNullOrEmpty(imageBase64))
                 {
                     fullPrompt += $"\n\n![User Screenshot](data:image/jpeg;base64,{imageBase64})";
-                    System.Diagnostics.Debug.WriteLine($"[CopilotService] Appended screenshot ({imageBase64.Length} chars, ~{imageBase64.Length / 1024}KB)");
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"[CopilotService] No screenshot attached");
+                    System.Diagnostics.Debug.WriteLine($"[CopilotService] Screenshot attached (~{imageBase64.Length / 1024}KB)");
                 }
 
-                System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== FULL PROMPT ({fullPrompt.Length} chars) =====");
-                foreach (var line in fullPrompt.Split(new[] { '\r', '\n' }, StringSplitOptions.None))
-                {
-                    System.Diagnostics.Debug.WriteLine($"[CopilotService] {line}");
-                }
+                System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== PROMPT ({fullPrompt.Length} chars) =====");
+                System.Diagnostics.Debug.WriteLine($"[CopilotService] {fullPrompt}");
                 System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== END PROMPT =====");
                 
                 var sendStart = DateTime.UtcNow;
-                System.Diagnostics.Debug.WriteLine($"[CopilotService] Stage 3 (Sending to model): Starting at {sendStart:HH:mm:ss.fff}...");
+                System.Diagnostics.Debug.WriteLine($"[CopilotService] Stage 3 (Sending to model)...");
                 
-                // Increase timeout to 5 minutes for complex multi-step operations
                 dynamic responseEvent = await session.SendAndWaitAsync(
                     new MessageOptions { Prompt = fullPrompt }, 
                     TimeSpan.FromSeconds(300), 
@@ -148,19 +129,13 @@ public class CopilotService : IAsyncDisposable
                 System.Diagnostics.Debug.WriteLine($"[CopilotService] Stage 3 (Model Response): {sendElapsed.TotalSeconds:F2}s");
                 System.Diagnostics.Debug.WriteLine($"[CopilotService] Total request time: {totalElapsed.TotalSeconds:F2}s");
                 
-                // Pattern matching for type-safe null checking with dynamic types
                 if (responseEvent?.Data?.Content is string content)
                 {
                     System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== RESPONSE ({content.Length} chars) =====");
-                    foreach (var line in content.Split(new[] { '\r', '\n' }, StringSplitOptions.None))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[CopilotService] {line}");
-                    }
+                    System.Diagnostics.Debug.WriteLine($"[CopilotService] {content}");
                     System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== END RESPONSE =====");
                     return content;
                 }
-                
-                System.Diagnostics.Debug.WriteLine($"[CopilotService] WARNING: No content in response event");
                 
                 return "No response received from GitHub Copilot.";
             }
@@ -176,18 +151,15 @@ public class CopilotService : IAsyncDisposable
         {
             var totalElapsed = DateTime.UtcNow - methodStartTime;
             System.Diagnostics.Debug.WriteLine($"[CopilotService] TIMEOUT after {totalElapsed.TotalSeconds:F2}s!");
-            System.Diagnostics.Debug.WriteLine($"[CopilotService] Timeout details: {tex.Message}");
-            System.Diagnostics.Debug.WriteLine($"[CopilotService] Stack trace: {tex.StackTrace}");
+            System.Diagnostics.Debug.WriteLine($"[CopilotService] {tex.Message}");
             return $"Request timed out after {totalElapsed.TotalSeconds:F0} seconds. This usually means the Copilot CLI is not responding. Check if 'copilot' command works in your terminal.";
         }
         catch (Exception ex)
         {
             var totalElapsed = DateTime.UtcNow - methodStartTime;
             System.Diagnostics.Debug.WriteLine($"[CopilotService] ERROR after {totalElapsed.TotalSeconds:F2}s: {ex.GetType().Name}");
-            System.Diagnostics.Debug.WriteLine($"[CopilotService] Error message: {ex.Message}");
-            System.Diagnostics.Debug.WriteLine($"[CopilotService] Stack trace: {ex.StackTrace}");
+            System.Diagnostics.Debug.WriteLine($"[CopilotService] {ex.Message}");
             
-            // Handle specific errors as before
             var message = ex.Message.ToLower();
             if (message.Contains("auth") || message.Contains("login") || message.Contains("unauthorized"))
             {

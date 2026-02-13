@@ -4,7 +4,7 @@
 
 > **Work in Progress**: Experimental proof-of-concept for deep OS integration with GitHub Copilot. APIs and features subject to change.
 
-.NET 10 WinUI 3 desktop application providing system tray access to GitHub Copilot CLI with automatic context awareness. Detects active focus, open applications, file system state, and running services to augment prompts with relevant environment information.
+.NET 11 Preview WinUI 3 desktop application providing system tray access to GitHub Copilot CLI with automatic context awareness. Detects active focus, open applications, file system state, and running services to augment prompts with relevant environment information.
 
 ## Features
 
@@ -23,34 +23,13 @@
 - **Smart Command Execution**: Imperative commands executed immediately with partial progress reporting
 - **"Thinking..." Indicator**: Visual feedback while processing requests
 - **Chat Persistence**: SQLite storage for message history
-- **GitHub Copilot SDK**: Direct integration with Copilot CLI (v0.1.20, 5-minute timeout for complex operations)
+- **GitHub Copilot SDK**: Direct integration with Copilot CLI (v0.1.24-preview, 5-minute timeout for complex operations)
 
 ## Prerequisites
 
 - Windows 10 1809+ (Windows 11 recommended)
-- .NET 10 SDK
+- .NET 11 Preview SDK
 - GitHub Copilot subscription
-- GitHub Copilot CLI
-
-### Installing Copilot CLI
-
-The SDK requires separate CLI installation:
-
-```powershell
-# Via winget (recommended)
-winget install --id GitHub.Copilot
-
-# Via GitHub CLI extension
-gh extension install github/gh-copilot
-
-# Verify
-copilot --version
-```
-
-Authentication:
-```powershell
-copilot auth login  # or: gh auth login
-```
 
 ## Build
 
@@ -67,9 +46,9 @@ dotnet run
 Run `CopilotTaskbarApp.exe`. Application icon appears in system tray. Click to open chat interface.
 
 **First Run**:
-1. CLI detection runs automatically
-2. If missing, offers winget installation
-3. Authentication prompts if needed
+1. CLI detection runs automatically (bundled with SDK)
+2. Authentication check runs
+3. If not authenticated, prompts for `gh auth login`
 
 **Context Gathering**:
 - Automatic on every query
@@ -89,7 +68,6 @@ Run `CopilotTaskbarApp.exe`. Application icon appears in system tray. Click to o
 
 **Keyboard Shortcuts**:
 - `Enter`: Send message
-- `Shift+Enter`: New line
 - `Up/Down`: Command history
 
 ## Architecture
@@ -104,9 +82,9 @@ Run `CopilotTaskbarApp.exe`. Application icon appears in system tray. Click to o
 
 ### Technologies
 
-- .NET 10 (self-contained deployment required for unpackaged WinUI 3)
+- .NET 11 Preview (Partial trimming enabled, full AOT incompatible with WinUI 3 data binding)
 - WinUI 3 with Windows App SDK
-- GitHub Copilot SDK v0.1.20 (JSON-RPC over stdio)
+- GitHub Copilot SDK v0.1.24-preview (JSON-RPC over stdio)
 - System.Windows.Forms.NotifyIcon (official Microsoft API)
 - Windows Accessibility API (UI Automation fallback)
 - SQLite for persistence
@@ -138,22 +116,19 @@ copilot --version
 
 **Authentication errors**:
 ```powershell
-copilot auth login  # or: gh auth login
-copilot --version   # verify
+gh auth login
 ```
 
 **Subscription errors**: Verify GitHub Copilot access on your account.
 
 **SDK Notes**:
 - SDK communicates via JSON-RPC over stdio
-- Starts CLI process automatically in server mode
-- Does not bundle or install CLI
+- Starts bundled CLI process automatically in server mode
 - Request timeout: 300 seconds (5 minutes) for complex multi-step operations
 
 **Connection issues**:
-1. Check CLI: `copilot --version`
-2. Test directly: `copilot chat "test"`
-3. Restart application
+1. Ensure you are authenticated (`gh auth login`)
+2. Restart application
 
 **Timeout issues**: For complex multi-step commands, try breaking into separate requests. Check debug logs (see Debugging section).
 
@@ -170,15 +145,13 @@ Detailed diagnostics are available in VS Code Debug Console:
 
 **What You'll See**:
 ```
-[CopilotService] ===== GetResponseAsync START at 14:23:45.123 =====
-[CopilotService] CLI already started, reusing connection
+[CopilotService] ===== Request START at 14:23:45.123 =====
 [CopilotService] Stage 1 (CLI Start): 0.05s
 [CopilotService] Stage 2 (Session Create): 0.12s
-[CopilotService] ===== FULL PROMPT (2345 chars) =====
+[CopilotService] ===== PROMPT (2345 chars) =====
 [CopilotService] You are a desktop assistant...
-[CopilotService] <full prompt with context>
 [CopilotService] ===== END PROMPT =====
-[CopilotService] Stage 3 (Sending to model): Starting at 14:23:45.300...
+[CopilotService] Stage 3 (Sending to model)...
 [CopilotService] Stage 3 (Model Response): 18.42s
 [CopilotService] Total request time: 18.59s
 [CopilotService] ===== RESPONSE (1234 chars) =====
@@ -195,106 +168,64 @@ Logs show exactly where delays occur:
 If timeout occurs:
 ```
 [CopilotService] TIMEOUT after 300.12s!
-[CopilotService] Timeout details: SendAndWaitAsync timed out after 00:05:00
-[CopilotService] Stack trace: ...
+[CopilotService] <timeout message>
 ```
 
 ## Known Issues
 
-### TextBox Cursor Spacing
+### Input Control
 
-**Symptom**: Space gradually appears between typed text and cursor as you type
+**Solution**: Application uses `AutoSuggestBox` for text input, which avoids the cursor spacing bug that affects `TextBox` and `RichEditBox` controls in WinUI 3.
 
-**Cause**: WinUI 3 TextBox layout bug when combining variable fonts, fixed heights, and padding
-
-**Status**: Partially mitigated by using minimal TextBox properties. May still occur occasionally.
-
-**Workaround**: Restart the application if typing becomes difficult.
-
-**Technical Details**: Issue occurs when WinUI's text measurement desyncs from cursor position calculation. Related to:
-- Variable font rendering (Segoe UI Variable)
-- Fixed height constraints
-- Complex layout property interactions
+**Typography**: All text uses Segoe UI 16pt (standard content) with automatic Windows text scaling support.
 
 See AGENTS.md for detailed technical analysis.
 
-### SDK/CLI Version Compatibility
+### SDK/CLI Compatibility
 
 **Symptom**: Authentication errors or session creation failures
 
-**Cause**: SDK v0.1.20 may have compatibility issues with newer CLI versions (v0.0.401+)
+**Diagnosis**: Check debug logs (see Debugging section) for CLI startup or session errors
 
-**Diagnosis**: Check debug logs for:
-```
-[CopilotService] CLI startup failed: ...
-[CopilotService] Stage 2 (Session Create): <long time or error>
-```
-
-**Workaround**: Ensure CLI is properly authenticated:
+**Resolution**: Ensure CLI is properly authenticated:
 ```powershell
-copilot auth login
-copilot chat "test"  # Verify CLI works standalone
+gh auth login
 ```
 
 ## Troubleshooting
 
-**CLI not found**:
-```powershell
-winget install --id GitHub.Copilot
-copilot --version
-```
+**CLI not found**: The Copilot CLI is bundled with the SDK (no separate installation required)
 
 **Authentication errors**:
 ```powershell
-copilot auth login  # or: gh auth login
-copilot --version   # verify
+gh auth login
 ```
 
-**Subscription errors**: Verify GitHub Copilot access on your account.
+**Subscription errors**: Verify GitHub Copilot access on your account
 
 **SDK Notes**:
 - SDK communicates via JSON-RPC over stdio
-- Starts CLI process automatically in server mode
-- Does not bundle or install CLI
+- Starts bundled CLI process automatically in server mode
+- Request timeout: 300 seconds (5 minutes)
 
-**Connection issues**:
-1. Check CLI: `copilot --version`
-2. Test directly: `copilot chat "test"`
-3. Restart application
+## Publishing
 
-## Development
-
-**Build**:
-```powershell
-dotnet build --configuration Release
-```
-
-**Publish** (self-contained required for unpackaged WinUI 3):
+**Self-contained deployment** (required for unpackaged WinUI 3):
 ```powershell
 dotnet publish -c Release -r win-x64    # x64
 dotnet publish -c Release -r win-arm64  # ARM64
 ```
 
-Output: `bin\Release\net10.0-windows10.0.19041.0\{runtime}\publish\`
+Output: `bin\Release\net11.0-windows10.0.19041.0\{runtime}\publish\`
 
 **Key Dependencies**:
 - `Microsoft.WindowsAppSDK` - WinUI 3 framework
-- `GitHub.Copilot.SDK` v0.1.20 - Copilot integration
+- `GitHub.Copilot.SDK` v0.1.24-preview.0 - Copilot integration
 - `Microsoft.Data.Sqlite` - Persistence
 - `CommunityToolkit.WinUI.UI.Controls.Markdown` - Message rendering
 - Framework references: WindowsForms (NotifyIcon), WPF (UI Automation)
 
 ## Technical Notes
-
-**Type Safety**: SDK v0.1.20 uses internal types. Solution uses `dynamic` with pattern matching:
-```csharp
-if (responseEvent?.Data?.Content is string content) { }
-```
-
-**Deployment Constraints**:
-- Self-contained deployment required (unpackaged WinUI 3 limitation)
-- Single-file publish incompatible with WinUI 3
-- Native AOT not supported
 
 **Context Detection Performance**:
 - Strong context (Explorer/Terminal/IDE + WSL detection): 15-30ms (no screenshot)
@@ -308,4 +239,4 @@ if (responseEvent?.Data?.Content is string content) { }
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+[MIT License](LICENSE)

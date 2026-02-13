@@ -34,7 +34,7 @@ Each time this project is revisited:
 ## Project-Specific Context
 
 This is a WinUI 3 desktop application that:
-- Uses the GitHub Copilot SDK (v0.1.20+) for chat functionality with 5-minute timeouts for complex operations
+- Uses the GitHub Copilot SDK (v0.1.24-preview.0) for chat functionality with 5-minute timeouts for complex operations
 - Integrates with Windows taskbar via System.Windows.Forms.NotifyIcon
 - Detects active Windows Explorer folders and applications for context
 - Identifies WSL distributions when Windows Terminal shows Unix-style prompts
@@ -43,7 +43,8 @@ This is a WinUI 3 desktop application that:
 - Uses Windows Accessibility API (UI Automation) as fallback for enhanced context inference
 - Shows "Thinking..." placeholder while processing requests
 - Persists chat history in SQLite
-- Targets .NET 10 with self-contained deployment on ARM64 and x64
+- Targets .NET 11 Preview with partial trimming on ARM64 and x64
+- Full Native AOT disabled due to WinUI 3 incompatibility (data binding, XAML resources)
 
 ### Context Inference Strategy
 
@@ -96,8 +97,8 @@ The application infers user intent/questions/problems using a **tiered optimizat
 
 1. **System Tray Icon**: Uses official Microsoft System.Windows.Forms.NotifyIcon API instead of third-party libraries for maximum reliability
 2. **Deployment**: Self-contained deployment required for unpackaged WinUI 3 applications
-3. **SDK Integration**: Direct usage of GitHub.Copilot.SDK NuGet package with JSON-RPC communication to Copilot CLI
-4. **Authentication**: Leverages underlying Copilot CLI authentication (both `copilot auth login` and `gh auth login` supported)
+3. **SDK Integration**: Direct usage of GitHub.Copilot.SDK NuGet package with JSON-RPC communication to bundled Copilot CLI
+4. **Authentication**: Authentication via GitHub CLI (`gh auth login`) required
 
 ## System Prompt Guidelines
 
@@ -114,17 +115,17 @@ The application uses a comprehensive system prompt that instructs the model to:
 
 ## Important Constraints
 
-- WinUI 3 unpackaged apps MUST use self-contained deployment
-- Single-file publish is incompatible with WinUI 3
-- Native AOT is not supported with WinUI 3
-- The Copilot CLI must be installed separately (SDK does not bundle it)
+- Partial trimming enabled (.NET 11 Preview) for size optimization
+- Native AOT not compatible with WinUI 3 (XAML data binding, resources, and dynamic types)
+- Single-file publish is incompatible with WinUI 3 + trimming
+- The Copilot CLI is bundled with the SDK (no separate installation required)
 - Request timeout is 300 seconds (5 minutes) for complex multi-step operations
 
 ## Type Safety Considerations
 
-### SDK Type System (v0.1.20)
+### SDK Type System (v0.1.24)
 
-The GitHub Copilot SDK v0.1.20 uses internal types that are not fully exposed in the public API surface. This requires careful handling:
+The GitHub Copilot SDK v0.1.24-preview.0 uses internal types that are not fully exposed in the public API surface. This requires careful handling:
 
 **Current Approach:**
 - Use `dynamic` for SDK session and response handling
@@ -133,7 +134,7 @@ The GitHub Copilot SDK v0.1.20 uses internal types that are not fully exposed in
 
 **Rationale:**
 - SDK's `SendAndWaitAsync` returns internal `AssistantMessageEvent?` type
-- Session types are not publicly exposed in v0.1.20
+- Session types are not publicly exposed in v0.1.24
 - `dynamic` provides flexibility for SDK evolution between versions
 - Pattern matching (`is` operator) enables type-safe extraction while working with dynamic
 
@@ -186,13 +187,13 @@ When timeout occurs, logs show:
 
 **Example Output:**
 ```
-[CopilotService] ===== GetResponseAsync START at 14:23:45.123 =====
+[CopilotService] ===== Request START at 14:23:45.123 =====
 [CopilotService] Stage 1 (CLI Start): 0.05s
 [CopilotService] Stage 2 (Session Create): 0.12s
-[CopilotService] ===== FULL PROMPT (2345 chars) =====
+[CopilotService] ===== PROMPT (2345 chars) =====
 [CopilotService] <full prompt content>
 [CopilotService] ===== END PROMPT =====
-[CopilotService] Stage 3 (Sending to model): Starting at 14:23:45.300...
+[CopilotService] Stage 3 (Sending to model)...
 [CopilotService] Stage 3 (Model Response): 18.42s
 [CopilotService] Total request time: 18.59s
 [CopilotService] ===== RESPONSE (1234 chars) =====
@@ -213,35 +214,71 @@ When timeout occurs, logs show:
 
 **Symptom**: As you type in the input box, increasing space appears between text and cursor
 
-**Root Cause**: WinUI 3 TextBox measurement bug when combining:
-- Variable fonts (Segoe UI Variable Text)
-- Fixed height constraints
-- Explicit padding values
-- VerticalContentAlignment settings
+**Root Cause**: WinUI 3 TextBox/RichEditBox layout bug that causes text measurement to desync from cursor position
 
-**Current Mitigation**: Minimalist TextBox with only essential properties:
+**Attempted Solutions**:
+1. ✗ Variable font removal (Segoe UI Variable → Segoe UI)
+2. ✗ Explicit CharacterSpacing=0
+3. ✗ Monospace font (Consolas)
+4. ✗ UseLayoutRounding=False
+5. ✗ RichEditBox control (different rendering path)
+6. ✓ AutoSuggestBox control (FIXED)
+
+**Final Solution**: 
 ```xaml
-<TextBox PlaceholderText="..."
-         AcceptsReturn="False"
-         TextWrapping="NoWrap"
-         IsSpellCheckEnabled="False"
-         IsTextPredictionEnabled="False"
-         FontSize="{StaticResource StandardFontSize}"/>
+<AutoSuggestBox x:Name="InputBox"
+                PlaceholderText="Ask GitHub Copilot..."
+                FontFamily="Segoe UI"
+                FontSize="16"
+                Padding="12,8,12,8"
+                QuerySubmitted="InputBox_QuerySubmitted"
+                TextChanged="InputBox_TextChanged"
+                KeyDown="InputBox_KeyDown"/>
 ```
 
-**Status**: Partially mitigated but may still occur. Avoid adding:
-- Explicit `Height`, `MinHeight`, `MaxHeight`
-- Custom `Padding` values
-- `CharacterSpacing`
-- `FontFamily` overrides
-- Layout properties like `HorizontalAlignment="Stretch"`
+```csharp
+private async void InputBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+{
+    // Handle Enter key press
+    await SendMessageAsync();
+}
+```
 
-**Workaround**: If issue persists, restart the application.
+**Key Findings**:
+- Issue affects TextBox and RichEditBox controls in WinUI 3
+- AutoSuggestBox uses different text rendering implementation that avoids the cursor positioning bug
+- Research indicated TextBoxView.cpp measurement/positioning desynchronization in TextBox/RichEditBox
+- No documented official fixes from Microsoft for TextBox/RichEditBox
+- AutoSuggestBox successfully avoids the issue
+
+**Status**: ✓ Resolved by switching to AutoSuggestBox.
 
 ### SDK/CLI Compatibility
 
-**Issue**: SDK v0.1.20 may have compatibility issues with newer CLI versions
-- SDK expects older CLI interface
-- CLI v0.0.401+ uses `--acp` mode with different command structure
+**Issue**: SDK versions may require specific CLI versions.
+**Resolution**: The SDK now bundles the correct CLI version, reducing compatibility issues.
 
 **Monitoring**: Debug logs will show if CLI startup or session creation fails
+
+## UI Design Principles
+
+### Typography
+
+All UI elements use **Segoe UI** font family with standardized sizes for Windows 11 native appearance:
+
+- **Standard content**: 16pt (chat messages, input box)
+- **Secondary text**: 13pt (timestamps, metadata)
+- **Headers**: 16pt (message sender names)
+- **Icons**: 16pt (buttons, interface elements)
+
+**Text Scaling**: WinUI 3 automatically respects Windows text scaling settings (Settings → Accessibility → Text size). Font sizes are base values that scale with user preferences.
+
+**Previous Variation Fonts Removed**: The application originally used "Segoe UI Variable Display" and "Segoe UI Variable Text" which contributed to the TextBox cursor spacing bug. Plain "Segoe UI" provides better consistency and avoids rendering issues.
+
+### Input Control
+
+- **AutoSuggestBox** for message input:
+  - Handles Enter key via `QuerySubmitted` event
+  - Avoids TextBox/RichEditBox cursor spacing bug
+  - Maintains Windows 11 native look and feel
+  - Up/Down arrows for command history navigation

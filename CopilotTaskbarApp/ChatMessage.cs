@@ -15,7 +15,21 @@ public class ChatMessage : INotifyPropertyChanged
 
     public int Id { get; set; }
     public string Role { get; set; } = string.Empty;
-    public string Content { get; set; } = string.Empty;
+    
+    private string _content = string.Empty;
+    public string Content 
+    { 
+        get => _content;
+        set 
+        {
+            if (_content != value)
+            {
+                _content = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+    
     public DateTime Timestamp { get; set; }
     public string? Context { get; set; }
     

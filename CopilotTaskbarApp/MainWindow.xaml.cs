@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Input;
 using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
@@ -59,12 +60,9 @@ public sealed partial class MainWindow : Window
         _messages.Clear();
         try { _persistenceService.ClearHistoryAsync().GetAwaiter().GetResult(); } catch { }
         
-        // Initialize tray icon AFTER window is activated
         this.Activated += MainWindow_Activated;
         
-        // Don't load old history
-        // LoadChatHistory();
-        CheckCopilotCli();
+        InitializeCopilot();
         LoadAvatarImages();
         
         Title = "GitHub Copilot Chat";
@@ -117,60 +115,40 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            // Get user's profile info just for the name/initial
             var users = await Windows.System.User.FindAllAsync();
             var currentUser = users.FirstOrDefault(u => u.Type == Windows.System.UserType.LocalUser) ?? users.FirstOrDefault();
 
             if (currentUser != null)
             {
-                // Get display name
                 try 
                 {
                     var displayNameObj = await currentUser.GetPropertyAsync(Windows.System.KnownUserProperties.DisplayName);
                     if (displayNameObj != null)
                     {
-                        _userDisplayName = displayNameObj.ToString();
-                        System.Diagnostics.Debug.WriteLine($"User display name loaded: {_userDisplayName}");
+                        var fullName = displayNameObj.ToString();
+                        _userDisplayName = fullName?.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? fullName;
                         
-                        // Update existing messages
-                        foreach (var msg in _messages)
+                        foreach (var msg in _messages.Where(m => m.IsUserMessage))
                         {
-                            if (msg.IsUserMessage)
-                            {
-                                msg.UserName = _userDisplayName;
-                            }
+                            msg.UserName = _userDisplayName;
                         }
                     }
                 }
                 catch { }
-                
-                // SKIPPING Picture loading per request
             }
         }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Failed to load user info: {ex.Message}");
-        }
+        catch { }
         
-        // Ensure copilot avatar exists
         try
         {
             var baseDir = AppContext.BaseDirectory;
             var copilotPath = Path.Combine(baseDir, _copilotAvatarPath);
-            if (!File.Exists(copilotPath))
-            {
-                System.Diagnostics.Debug.WriteLine($"Copilot avatar not found at {copilotPath}");
-            }
-            else
+            if (File.Exists(copilotPath))
             {
                 _copilotAvatarPath = copilotPath;
-                // Update assistant messages
-                foreach (var msg in _messages)
+                foreach (var msg in _messages.Where(m => !m.IsUserMessage))
                 {
-                    if (!msg.IsUserMessage)
-                    {
-                        msg.AvatarImagePath = _copilotAvatarPath;
-                    }
+                    msg.AvatarImagePath = _copilotAvatarPath;
                 }
             }
         }
@@ -306,45 +284,23 @@ public sealed partial class MainWindow : Window
         Application.Current.Exit();
     }
 
-    private async void CheckCopilotCli()
+    private async void InitializeCopilot()
     {
         try
         {
             SendButton.IsEnabled = false;
             InputBox.IsEnabled = false;
 
-            // Check if Copilot CLI is installed
-            var status = await CopilotCliDetector.CheckCopilotCliAsync();
-
-            if (!status.IsInstalled)
-            {
-                // CLI not found - show message only
-                var installMessage = new ChatMessage
-                {
-                    Role = "system",
-                    Content = "GitHub Copilot CLI is not installed.\n\n" +
-                              "Installation options:\n" +
-                              "1. Via winget: winget install --id GitHub.Copilot\n" +
-                              "2. Via GitHub CLI: gh extension install github/gh-copilot\n" +
-                              "3. Download from: https://docs.github.com/en/copilot/cli\n\n" +
-                              "After installation, restart this application.",
-                    Timestamp = DateTime.Now,
-                    AvatarImagePath = _copilotAvatarPath
-                };
-                _messages.Add(installMessage);
-            }
-            else
-            {
-                // CLI installed - check authentication
-                await CheckAuthenticationAsync();
-            }
+            // Copilot CLI is now bundled with the SDK, so we assume it is installed.
+            // Directly check authentication.
+            await CheckAuthenticationAsync();
         }
         catch (Exception ex)
         {
             var errorMessage = new ChatMessage
             {
                 Role = "system",
-                Content = $"Error checking Copilot CLI: {ex.Message}",
+                Content = $"Error initializing Copilot: {ex.Message}",
                 Timestamp = DateTime.Now,
                 AvatarImagePath = _copilotAvatarPath
             };
@@ -363,14 +319,17 @@ public sealed partial class MainWindow : Window
             
             if (!isAuthenticated)
             {
+                var authInstructions = "To authenticate:\n" +
+                                     "1. Run in terminal: gh auth login\n" +
+                                     "2. Select 'GitHub.com' -> 'Login with a web browser'\n" +
+                                     "3. Follow the prompts to authorize 'GitHub Copilot'\n" +
+                                     "4. Restart this application";
+
                 var welcomeMessage = new ChatMessage
                 {
                     Role = "system", // Change to system to hide copy button
-                    Content = "Not authenticated with GitHub.\n\n" +
-                             "To authenticate:\n" +
-                             "1. Run: gh auth login\n" +
-                             "2. Follow the prompts\n" +
-                             "3. Restart this application\n\n" +
+                    Content = "Not authenticated with GitHub Copilot.\n\n" +
+                             authInstructions + "\n\n" +
                              "Need help? Visit: https://docs.github.com/en/copilot/cli",
                     Timestamp = DateTime.Now,
                     AvatarImagePath = _copilotAvatarPath
@@ -421,7 +380,6 @@ public sealed partial class MainWindow : Window
                 Visible = true
             };
 
-            // Load icon from assets - try copilot-icon.ico first, fallback to github-mark.ico
             var baseDir = AppContext.BaseDirectory;
             var iconPath = Path.Combine(baseDir, "Assets", "copilot-icon.ico");
             if (!File.Exists(iconPath))
@@ -435,7 +393,6 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                // Create a simple default icon if file doesn't exist or is 0 bytes
                 var bmp = new System.Drawing.Bitmap(32, 32);
                 var g = System.Drawing.Graphics.FromImage(bmp);
                 g.Clear(System.Drawing.Color.Purple);
@@ -444,14 +401,11 @@ public sealed partial class MainWindow : Window
                 _notifyIcon.Icon = Icon.FromHandle(bmp.GetHicon());
             }
 
-            // Create context menu
-            var contextMenu = new WinForms.ContextMenuStrip();
-            
-            // Improve rendering for High DPI
-            contextMenu.RenderMode = WinForms.ToolStripRenderMode.System;
-            
-            // Explicitly set font to ensure it's not using a default low-res bitmap font
-            contextMenu.Font = new System.Drawing.Font("Segoe UI", 9F);
+            var contextMenu = new WinForms.ContextMenuStrip
+            {
+                RenderMode = WinForms.ToolStripRenderMode.System,
+                Font = new System.Drawing.Font("Segoe UI", 9F)
+            };
             
             contextMenu.Items.Add("Show Chat", null, (s, e) =>
             {
@@ -461,11 +415,13 @@ public sealed partial class MainWindow : Window
             {
                 DispatcherQueue.TryEnqueue(() => HideMainWindow());
             });
-            contextMenu.Items.Add("-"); // Separator
+            contextMenu.Items.Add("-");
 
-            var alwaysOnTopItem = new WinForms.ToolStripMenuItem("Always on Top");
-            alwaysOnTopItem.CheckOnClick = true;
-            alwaysOnTopItem.Checked = _isAlwaysOnTop;
+            var alwaysOnTopItem = new WinForms.ToolStripMenuItem("Always on Top")
+            {
+                CheckOnClick = true,
+                Checked = _isAlwaysOnTop
+            };
             alwaysOnTopItem.Click += (s, e) => 
             {
                 _isAlwaysOnTop = alwaysOnTopItem.Checked;
@@ -477,7 +433,7 @@ public sealed partial class MainWindow : Window
             {
                 DispatcherQueue.TryEnqueue(() => 
                 {
-                    _isExiting = true; // Allow application to close
+                    _isExiting = true;
                     _notifyIcon?.Dispose();
                     Application.Current.Exit();
                 });
@@ -485,49 +441,28 @@ public sealed partial class MainWindow : Window
             
             _notifyIcon.ContextMenuStrip = contextMenu;
             
-            // Click to toggle window visibility
             _notifyIcon.MouseClick += (s, e) => 
             {
                 if (e.Button != WinForms.MouseButtons.Left)
-                {
                     return;
-                }
 
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
                     if (IsWindowVisible(hwnd))
-                    {
                         HideMainWindow();
-                    }
                     else
-                    {
                         ShowMainWindow();
-                    }
                 });
             };
-
-            Debug.WriteLine("NotifyIcon initialized successfully");
         }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Tray icon initialization error: {ex}");
-        }
+        catch { }
     }
 
     private void ToggleAlwaysOnTop(bool enable)
     {
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         SetWindowPos(hwnd, enable ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-    }
-
-    private async void LoadChatHistory()
-    {
-        var messages = await _persistenceService.LoadMessagesAsync();
-        foreach (var msg in messages)
-        {
-            _messages.Add(msg);
-        }
     }
 
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -537,7 +472,7 @@ public sealed partial class MainWindow : Window
             !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
         {
             e.Handled = true;
-            SendButton_Click(sender, null);
+            SendButton_Click(sender, null!);
         }
         // Up arrow - navigate to previous command
         else if (e.Key == Windows.System.VirtualKey.Up)
@@ -560,89 +495,79 @@ public sealed partial class MainWindow : Window
             if (_commandHistory.Count == 0)
                 return;
 
-            // If we are currently editing a new line and press UP, we should go to the last history item
             if (_historyIndex == -1)
             {
-                if (direction == -1) // UP
+                if (direction == -1)
                 {
                      _currentInput = InputBox.Text ?? "";
                      _historyIndex = _commandHistory.Count - 1;
                 }
-                else // DOWN (nothing to do if already at bottom)
+                else
                 {
                     return;
                 }
             }
             else
             {
-                // We are navigating history
-                // UP (-1) goes to older (lower index)
-                // DOWN (+1) goes to newer (higher index)
-                
                 int newIndex = _historyIndex + direction;
 
                 if (newIndex < 0)
                 {
-                    // Don't wrap around top
                     newIndex = 0;
                 }
                 else if (newIndex >= _commandHistory.Count)
                 {
-                    // Went past the newest item -> restore current input (blank or drafted)
                     _historyIndex = -1;
                     InputBox.Text = _currentInput;
-                    InputBox.SelectionStart = InputBox.Text?.Length ?? 0;
                     return;
                 }
                 
                 _historyIndex = newIndex;
             }
 
-            // Display the history item
             if (_historyIndex >= 0 && _historyIndex < _commandHistory.Count)
             {
                 InputBox.Text = _commandHistory[_historyIndex];
-                InputBox.SelectionStart = InputBox.Text.Length;
             }
         }
-        catch (Exception ex)
+        catch
         {
-            System.Diagnostics.Debug.WriteLine($"Error navigating history: {ex.Message}");
-            _historyIndex = -1; // Reset on error
+            _historyIndex = -1;
         }
+    }
+
+    private void InputBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        // Required event handler for AutoSuggestBox (no autocomplete needed)
+    }
+
+    private async void InputBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+    {
+        // Handle Enter key press
+        await SendMessageAsync();
     }
 
     private async void SendButton_Click(object sender, RoutedEventArgs e)
     {
-        System.Diagnostics.Debug.WriteLine("[SendButton_Click] Button clicked!");
         await SendMessageAsync();
     }
 
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "CopilotService.GetResponseAsync uses dynamic for SDK internal types. This is isolated and documented.")]
     private async Task SendMessageAsync()
     {
         try 
         {
-            System.Diagnostics.Debug.WriteLine("[SendMessageAsync] Method started!");
-            
             var input = InputBox.Text?.Trim();
-            System.Diagnostics.Debug.WriteLine($"[SendMessageAsync] Input: {input}");
             
             if (string.IsNullOrEmpty(input)) 
-            {
-                System.Diagnostics.Debug.WriteLine("[SendMessageAsync] Input is empty, returning");
                 return;
-            }
 
-            System.Diagnostics.Debug.WriteLine("[SendMessageAsync] Proceeding with send...");
-
-            // Add to command history
             _commandHistory.Add(input);
             _historyIndex = -1;
             _currentInput = "";
 
             InputBox.Text = string.Empty;
 
-            // Optimistic UI update
             var userMessage = new ChatMessage
             {
                 Role = "user",
@@ -655,7 +580,6 @@ public sealed partial class MainWindow : Window
             _messages.Add(userMessage);
             await _persistenceService.SaveMessageAsync(userMessage);
 
-            // Add a placeholder "thinking" message
             var thinkingMessage = new ChatMessage
             {
                 Role = "assistant",
@@ -665,22 +589,15 @@ public sealed partial class MainWindow : Window
             };
             _messages.Add(thinkingMessage);
 
-            DispatcherQueue.TryEnqueue(() => 
-            {
-                 ScrollToBottom();
-            });
+            DispatcherQueue.TryEnqueue(() => ScrollToBottom());
             
-            // Re-enable input immediately so user can queue another message or continue working
             SendButton.IsEnabled = true;
             
             var (currentContext, screenshot) = await _contextService.GetContextAsync();
             userMessage.Context = currentContext;
 
-            System.Diagnostics.Debug.WriteLine($"[SendMessageAsync] Starting request. Message count: {_messages.Count}");
-
             try
             {
-                // Get recent messages for conversation context (excluding the thinking message we just added)
                 var recentMessages = _messages.Count > 2 
                     ? _messages.Take(_messages.Count - 2).ToList() 
                     : null;
@@ -693,30 +610,59 @@ public sealed partial class MainWindow : Window
                 string response;
                 if (completedTask == timeoutTask)
                 {
-                    System.Diagnostics.Debug.WriteLine("[SendMessageAsync] UI timeout after 300 seconds");
                     response = "Request timed out after 5 minutes. For complex multi-step operations, try breaking them into separate requests.";
                 }
                 else
                 {
-                    response = await responseTask;
-                    System.Diagnostics.Debug.WriteLine($"[SendMessageAsync] Got response: {response?.Substring(0, Math.Min(50, response?.Length ?? 0))}...");
+                    try
+                    {
+                        response = await responseTask;
+                    }
+                    catch (Exception responseEx)
+                    {
+                        response = $"Error getting response: {responseEx.Message}\n\nStack trace:\n{responseEx.StackTrace}";
+                    }
                 }
 
-                // Update the thinking message instead of adding a new one
-                DispatcherQueue.TryEnqueue(() => 
+                var tcs = new System.Threading.Tasks.TaskCompletionSource();
+                var uiUpdateSuccess = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.High, () => 
                 {
-                    thinkingMessage.Content = response;
-                    thinkingMessage.Timestamp = DateTime.Now;
-                    _persistenceService.SaveMessageAsync(thinkingMessage); 
-                    
-                    // Smoothly scroll to the updated message
-                    ScrollToBottom();
+                    try
+                    {
+                        var thinkingIndex = _messages.IndexOf(thinkingMessage);
+                        
+                        if (thinkingIndex >= 0)
+                        {
+                            _messages.RemoveAt(thinkingIndex);
+                            
+                            var responseMessage = new ChatMessage
+                            {
+                                Role = "assistant",
+                                Content = response ?? string.Empty,
+                                Timestamp = DateTime.Now,
+                                AvatarImagePath = _copilotAvatarPath
+                            };
+                            
+                            _messages.Insert(thinkingIndex, responseMessage);
+                            _ = _persistenceService.SaveMessageAsync(responseMessage);
+                        }
+                        
+                        ScrollToBottom();
+                        tcs.SetResult();
+                    }
+                    catch (Exception uiEx)
+                    {
+                        tcs.SetException(uiEx);
+                    }
                 });
+                
+                if (uiUpdateSuccess)
+                {
+                    await tcs.Task;
+                }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[SendMessageAsync] Exception: {ex.Message}");
-                // Update the thinking message with error
                 DispatcherQueue.TryEnqueue(() => 
                 {
                     thinkingMessage.Role = "system";
@@ -727,21 +673,16 @@ public sealed partial class MainWindow : Window
             }
             finally
             {
-                // Focus input for next query
                 InputBox.Focus(FocusState.Programmatic);
-                
-                // Scroll to bottom
                 await Task.Delay(100);
                 ScrollToBottom();
             }
         }
         catch (Exception criticalEx)
         {
-            // Log critical crash
             var tempPath = Path.Combine(Path.GetTempPath(), "copilot_crash.log");
             File.AppendAllText(tempPath, $"{DateTime.Now}: Critical error in SendMessageAsync: {criticalEx}\n");
             
-            // Try to show error in UI if possible
             DispatcherQueue.TryEnqueue(() => 
             {
                  var errorMessage = new ChatMessage
@@ -751,27 +692,13 @@ public sealed partial class MainWindow : Window
                     Timestamp = DateTime.Now
                 };
                 _messages.Add(errorMessage);
-                SendButton.IsEnabled = true; // Ensure button re-enabled
+                SendButton.IsEnabled = true;
             });
         }
     }
 
     private void ScrollToBottom()
     {
-        // Scroll to bottom using the outer ScrollViewer if possible, otherwise ListView
-        // Since we wrapped ListView in a ScrollViewer, we should scroll that.
-        // But finding the ScrollViewer in code-behind from just a name inside XAML structure can be tricky without x:Name
-        // Let's assume we can get to it or stick to ListView.ScrollIntoView which MIGHT work if nested correctly.
-        
-        // Actually, with the nested approach (ScrollViewer > ListView), ListView.ScrollIntoView often fails to scroll the parent.
-        // A better approach for the "Scrolling Not Working" bug is to go BACK to just ListView but ensure it gets focus/hit test.
-        // BUT user said "Mouse scroll wheel still not working".
-        
-        // If we revert to just ListView, we must ensure the item container doesn't swallow events.
-        // If we use ScrollViewer > ListView, we break virtualization but fix mouse wheel usually.
-        
-        // Let's try to find the ScrollViewer directly if we named it, or just use UpdateLayout.
-        // Wait, I didn't name the ScrollViewer in the previous step. Let me name it "ChatScrollViewer".
         if (ChatScrollViewer != null)
         {
              ChatScrollViewer.ChangeView(null, ChatScrollViewer.ScrollableHeight, null);

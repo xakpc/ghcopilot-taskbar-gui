@@ -12,18 +12,15 @@
         <Grid.Resources>
 
             <Style TargetType="TextBlock">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Display, Segoe UI, sans-serif"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
             </Style>
             <Style TargetType="controls:MarkdownTextBlock">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI, sans-serif"/>
-            </Style>
-            <Style TargetType="TextBox">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI, sans-serif"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
             </Style>
             
-            <x:Double x:Key="StandardFontSize">19</x:Double>
-            <x:Double x:Key="SmallFontSize">15</x:Double>
-            <x:Double x:Key="HeaderFontSize">17.5</x:Double>
+            <x:Double x:Key="StandardFontSize">16</x:Double>
+            <x:Double x:Key="SmallFontSize">13</x:Double>
+            <x:Double x:Key="HeaderFontSize">16</x:Double>
             
             <Style x:Key="SubtlerButtonStyle" TargetType="Button">
                 <Setter Property="Background" Value="Transparent"/>
@@ -154,7 +151,7 @@
                                        FontSize="{StaticResource HeaderFontSize}"
                                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
                                        
-                            <controls:MarkdownTextBlock Text="{Binding Content}" 
+                            <controls:MarkdownTextBlock Text="{Binding Content, Mode=OneWay}" 
                                                       TextWrapping="Wrap"
                                                       IsTextSelectionEnabled="True"
                                                       Background="Transparent"
@@ -207,16 +204,15 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <TextBox Grid.Column="0" x:Name="InputBox"
-                     PlaceholderText="Ask GitHub Copilot..."
-                     AcceptsReturn="False"
-                     TextWrapping="NoWrap"
-                     IsSpellCheckEnabled="False"
-                     IsTextPredictionEnabled="False"
-                     KeyDown="InputBox_KeyDown"
-                     Margin="0,0,8,0"
-                     VerticalAlignment="Center"
-                     FontSize="{StaticResource StandardFontSize}"/>
+            <AutoSuggestBox Grid.Column="0" x:Name="InputBox"
+                            PlaceholderText="Ask GitHub Copilot..."
+                            FontFamily="Segoe UI"
+                            FontSize="16"
+                            Padding="12,8,12,8"
+                            Margin="0,0,8,0"
+                            TextChanged="InputBox_TextChanged"
+                            QuerySubmitted="InputBox_QuerySubmitted"
+                            KeyDown="InputBox_KeyDown"/>
 
             <Button Grid.Column="1" x:Name="SendButton"
                     Style="{StaticResource AccentButtonStyle}"

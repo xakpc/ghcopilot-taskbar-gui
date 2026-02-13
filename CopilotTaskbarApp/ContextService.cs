@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -40,6 +41,7 @@ public class ContextService
 
     private const uint GW_HWNDNEXT = 2;
 
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "COM interop methods use dynamic for Shell.Application. This is isolated and optional functionality.")]
     public async Task<(string context, string? screenshot)> GetContextAsync()
     {
         return await Task.Run(async () =>
@@ -251,6 +253,9 @@ public class ContextService
         return "";
     }
 
+    [RequiresDynamicCode("COM interop with Shell.Application requires dynamic code generation")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "COM interop for Shell.Application is isolated and optional")]
+    [UnconditionalSuppressMessage("Trimming", "IL2072:UnrecognizedReflectionPattern", Justification = "GetTypeFromProgID for Shell.Application is well-known COM type")]
     private List<string> GetAllExplorerFolders()
     {
         var folders = new List<string>();
@@ -289,6 +294,9 @@ public class ContextService
         return folders;
     }
 
+    [RequiresDynamicCode("COM interop with Shell.Application requires dynamic code generation")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "COM interop for Shell.Application is isolated and optional")]
+    [UnconditionalSuppressMessage("Trimming", "IL2072:UnrecognizedReflectionPattern", Justification = "GetTypeFromProgID for Shell.Application is well-known COM type")]
     private (string context, bool hasStrongContext) GetActiveContextWithConfidence()
     {
         try
