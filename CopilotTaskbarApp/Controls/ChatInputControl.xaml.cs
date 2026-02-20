@@ -238,13 +238,7 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
         if (file != null && await ValidateFileAsync(file))
         {
             var properties = await file.GetBasicPropertiesAsync();
-            CurrentAttachment = new FileAttachment
-            {
-                FilePath = file.Path,
-                FileName = file.Name,
-                FileType = file.FileType,
-                FileSize = (long)properties.Size
-            };
+            CurrentAttachment = new FileAttachment(file.Path, file.Name, file.FileType, (long)properties.Size);
         }
         else
         {
@@ -286,13 +280,7 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
                 return;
 
             var properties = await file.GetBasicPropertiesAsync();
-            CurrentAttachment = new FileAttachment
-            {
-                FilePath = file.Path,
-                FileName = file.Name,
-                FileType = file.FileType,
-                FileSize = (long)properties.Size
-            };
+            CurrentAttachment = new FileAttachment(file.Path, file.Name, file.FileType, (long)properties.Size);
         }
         catch (Exception ex)
         {
@@ -365,13 +353,7 @@ public sealed partial class ChatInputControl : UserControl, INotifyPropertyChang
             }
 
             var fileInfo = new FileInfo(tempPath);
-            CurrentAttachment = new FileAttachment
-            {
-                FilePath = tempPath,
-                FileName = fileName,
-                FileType = ".png",
-                FileSize = fileInfo.Length,
-            };
+            CurrentAttachment = new FileAttachment(tempPath, fileName, ".png", fileInfo.Length);
         }
         catch (Exception ex)
         {

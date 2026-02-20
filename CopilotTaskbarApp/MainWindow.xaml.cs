@@ -1,18 +1,14 @@
+using CopilotTaskbarApp.Controls;
+using CopilotTaskbarApp.Controls.ChatInput;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
-using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
-using System.IO;
-using System.Threading.Tasks;
-using System.Runtime.InteropServices.WindowsRuntime;
-using WinForms = System.Windows.Forms;
-using CopilotTaskbarApp.Controls.ChatInput;
-using CopilotTaskbarApp.Controls;
 using Windows.Storage.Pickers;
+using WinForms = System.Windows.Forms;
 
 namespace CopilotTaskbarApp;
 
@@ -36,19 +32,14 @@ public sealed partial class MainWindow : Window
     private Microsoft.UI.Windowing.AppWindow _appWindow;
     private bool _isExiting = false;
 
+    private CancellationTokenSource? _streamingCts;
+
     public bool IsStreaming { get; set; }
 
     public MainWindow()
     {
         InitializeComponent();
-        
-        // Ensure WinForms high DPI mode is set for the tray icon context menu
-        try 
-        {
-            WinForms.Application.SetHighDpiMode(WinForms.HighDpiMode.PerMonitorV2);
-        }
-        catch { /* Might fail if already set, which is fine */ }
-        
+
         // Get AppWindow immediately for event handling
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
@@ -195,16 +186,16 @@ public sealed partial class MainWindow : Window
         var displayArea = Microsoft.UI.Windowing.DisplayArea.Primary;
         var workArea = displayArea.WorkArea;
         var outerBounds = displayArea.OuterBounds;
-        
+
         // 1/4 width, 1/2 height (2x taller)
         int width = workArea.Width / 4;
         int height = workArea.Height / 2; // 2x taller
-        
+
         // Add a small margin from the edges (12px) for better aesthetics
         int marginX = 12;
         int marginY = 12;
 
-        // Smart Detection: If WorkArea height is almost same as OuterBounds height, 
+        // Smart Detection: If WorkArea height is almost same as OuterBounds height,
         // it means Taskbar is Auto-Hidden (or not at bottom).
         // In this case, we need extra bottom margin to avoid being covered when Taskbar pops up.
         // Standard taskbar is ~48px.
@@ -249,6 +240,7 @@ public sealed partial class MainWindow : Window
         chatInput.MessageSent += ChatInput_MessageSent;
         chatInput.FileSendRequested += ChatInput_FileSendRequested;
         chatInput.RequestHistoryItem += ChatInput_RequestHistoryItem;
+        chatInput.StreamingStopRequested += ChatInput_StreamingStopRequested;
 
     }
 
@@ -294,13 +286,7 @@ public sealed partial class MainWindow : Window
         {
             var properties = await file.GetBasicPropertiesAsync();
 
-            chatInput.CurrentAttachment = new FileAttachment
-            {
-                FilePath = file.Path,
-                FileName = file.Name,
-                FileType = file.FileType,
-                FileSize = (long)properties.Size
-            };
+            chatInput.CurrentAttachment = new FileAttachment(file.Path, file.Name, file.FileType, (long)properties.Size);
         }
 
     }
@@ -590,6 +576,11 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ChatInput_StreamingStopRequested(object? sender, EventArgs e)
+    {
+        _streamingCts?.Cancel();
+    }
+
     private async void ChatInput_MessageSent(object? sender, MessageEventArgs e)
     {
         await SendMessageAsync(e.Message, e.Model, e.Attachment?.FilePath);
@@ -600,8 +591,11 @@ public sealed partial class MainWindow : Window
     {
         try 
         {            
-            if (string.IsNullOrEmpty(input)) 
+            if (string.IsNullOrEmpty(input))
                 return;
+
+            _streamingCts?.Dispose();
+            _streamingCts = new CancellationTokenSource();
 
             chatInput.IsStreaming = true;
 
@@ -641,13 +635,18 @@ public sealed partial class MainWindow : Window
                     ? _messages.Take(_messages.Count - 2).ToList() 
                     : null;
                 
-                var responseTask = _copilotService.GetResponseAsync(input, model, currentContext, screenshot, attachment, recentMessages);
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(300));
+                var responseTask = _copilotService.GetResponseAsync(input, model, currentContext,
+                    screenshot, attachment, recentMessages, _streamingCts.Token);
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(300), _streamingCts.Token);
                 
                 var completedTask = await Task.WhenAny(responseTask, timeoutTask);
                 
                 string response;
-                if (completedTask == timeoutTask)
+                if (_streamingCts.IsCancellationRequested)
+                {
+                    response = "Request cancelled.";
+                }
+                else if (completedTask == timeoutTask)
                 {
                     response = "Request timed out after 5 minutes. For complex multi-step operations, try breaking them into separate requests.";
                 }
@@ -656,6 +655,10 @@ public sealed partial class MainWindow : Window
                     try
                     {
                         response = await responseTask;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        response = "Request cancelled.";
                     }
                     catch (Exception responseEx)
                     {

@@ -6,12 +6,6 @@ namespace CopilotTaskbarApp.Controls
 {
     internal class FileTypesHelpers
     {
-        public static string ConvertMediaTypeToFileTypeAsString(List<string> mediaTypes)
-        {
-            var fileTypes = ConvertMediaTypeToFileType(mediaTypes);
-            return string.Join(", ", fileTypes);
-        }
-
         public static List<string> ConvertMediaTypeToFileType(List<string> mediaTypes)
         {
             var fileTypes = new List<string>();
@@ -41,11 +35,6 @@ namespace CopilotTaskbarApp.Controls
                 }
             }
             return fileTypes;
-        }
-
-        public static string GetMimeType(string fileName)
-        {
-            return MimeTypes.GetMimeType(fileName);
         }
 
         public static IEnumerable<string> GetAllTextExtensions()
@@ -83,18 +72,6 @@ namespace CopilotTaskbarApp.Controls
         {
             if (string.IsNullOrWhiteSpace(extension)) return false;
             return GetAllSupportedExtensions().Contains(extension.ToLowerInvariant());
-        }
-
-        public static bool IsTextFile(string extension)
-        {
-            if (string.IsNullOrWhiteSpace(extension)) return false;
-            return GetAllTextExtensions().Contains(extension.ToLowerInvariant());
-        }
-
-        public static bool IsImageFile(string extension)
-        {
-            if (string.IsNullOrWhiteSpace(extension)) return false;
-            return GetAllImageExtensions().Contains(extension.ToLowerInvariant());
         }
     }
 }
