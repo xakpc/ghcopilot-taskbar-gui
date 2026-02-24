@@ -1,4 +1,6 @@
+using CopilotTaskbarApp.Controls.ChatInput;
 using GitHub.Copilot.SDK;
+using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 
 namespace CopilotTaskbarApp;
@@ -32,7 +34,7 @@ public class CopilotService : IAsyncDisposable
 
     [RequiresDynamicCode("GitHub Copilot SDK uses internal dynamic types for session responses")]
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "SDK session handling requires dynamic for internal types. Pattern matching provides type safety.")]
-    public async Task<string> GetResponseAsync(string prompt, string? context = null, string? imageBase64 = null, List<ChatMessage>? recentMessages = null, CancellationToken cancellationToken = default)
+    public async Task<string> GetResponseAsync(string prompt, string model, string? context = null, string? imageBase64 = null, string? attachementPath = null, List<ChatMessage>? recentMessages = null, CancellationToken cancellationToken = default)
     {
         var methodStartTime = DateTime.UtcNow;
         System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== Request START at {methodStartTime:HH:mm:ss.fff} =====");
@@ -46,7 +48,7 @@ public class CopilotService : IAsyncDisposable
             stageStart = DateTime.UtcNow;
             dynamic session = await _client.CreateSessionAsync(new SessionConfig
             {
-                Model = "gpt-4",
+                Model = model,
                 Streaming = true
             }, cancellationToken);
             System.Diagnostics.Debug.WriteLine($"[CopilotService] Stage 2 (Session Create): {(DateTime.UtcNow - stageStart).TotalSeconds:F2}s");
@@ -103,6 +105,12 @@ public class CopilotService : IAsyncDisposable
                 {
                     fullPrompt += $"\n\n![User Screenshot](data:image/jpeg;base64,{imageBase64})";
                     System.Diagnostics.Debug.WriteLine($"[CopilotService] Screenshot attached (~{imageBase64.Length / 1024}KB)");
+                }
+
+                if (!string.IsNullOrEmpty(attachementPath))
+                {
+                    fullPrompt += $"\n\n[File Attachment: {attachementPath}]";
+                    System.Diagnostics.Debug.WriteLine($"[CopilotService] File attachment included: {attachementPath}");
                 }
 
                 System.Diagnostics.Debug.WriteLine($"[CopilotService] ===== PROMPT ({fullPrompt.Length} chars) =====");
@@ -195,5 +203,17 @@ public class CopilotService : IAsyncDisposable
             await _client.StopAsync();
             _isStarted = false;
         }
+    }
+
+    internal async Task<ObservableCollection<ModelRecord>> GetAvailableModelsAsync()
+    {
+        var models = await _client.ListModelsAsync();
+
+        var modelCollection = new ObservableCollection<ModelRecord>();
+        foreach (var model in models)
+        {
+            modelCollection.Add(new ModelRecord(model.Id, model.Name, "hint"));
+        }
+        return modelCollection;
     }
 }
